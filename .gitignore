@@ -6,8 +6,8 @@ Thumbs.db
 ._*
 
 # Build artifacts (compiled binary inside .app bundle)
-SMSCodeReader.app/Contents/MacOS/
-SMSCodeReader.app/Contents/Resources/
+OTPilot.app/Contents/MacOS/
+OTPilot.app/Contents/Resources/
 
 # Xcode
 *.xcuserdata/

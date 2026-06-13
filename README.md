@@ -1,4 +1,4 @@
-# SMSCodeReader - macOS 验证码自动读取工具
+# OTPilot - macOS 验证码自动读取工具
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey.svg)](https://github.com)
@@ -22,18 +22,18 @@
 ### 运行应用
 
 ```bash
-cd ~/Code/SMSCodeReader
+cd ~/Code/OTPilot
 ./run.sh
 ```
 
-应用会自动编译并启动。编译后的 `.app` 包会部署到桌面 `~/Desktop/SMSCodeReader.app`。
+应用会自动编译并部署到 `/Applications/OTPilot.app`。
 
 ### 首次运行权限设置
 
 1. **全磁盘访问权限** (必需)
    - 打开"系统设置" > "隐私与安全性" > "全磁盘访问"
-   - 点击 "+" 添加 `SMSCodeReader.app`
-   - 路径: `~/Desktop/SMSCodeReader.app`
+   - 点击 "+" 添加 `OTPilot.app`
+   - 路径: `~/Desktop/OTPilot.app`
 
 2. **通知权限** (可选但推荐)
    - 首次运行时会自动请求
@@ -68,9 +68,9 @@ cd ~/Code/SMSCodeReader
 也可以手动编译:
 
 ```bash
-cd ~/Code/SMSCodeReader
+cd ~/Code/OTPilot
 swiftc -target arm64-apple-macos13 \
-    -o SMSCodeReader.app/Contents/MacOS/SMSCodeReader \
+    -o OTPilot.app/Contents/MacOS/OTPilot \
     Sources/*.swift \
     -framework AppKit \
     -framework UserNotifications \
@@ -80,16 +80,16 @@ swiftc -target arm64-apple-macos13 \
 ## 项目结构
 
 ```
-SMSCodeReader/
+OTPilot/
 ├── Sources/
 │   ├── main.swift              # 应用入口和菜单栏 UI
 │   ├── CodeReaderManager.swift # 核心逻辑:数据库读取、验证码匹配
 │   └── Models.swift            # 数据模型定义
-├── SMSCodeReader.app/          # macOS 应用包
+├── OTPilot.app/                # macOS 应用包
 │   └── Contents/
 │       ├── Info.plist          # 应用配置
 │       └── MacOS/
-│           └── SMSCodeReader   # 编译后的可执行文件
+│           └── OTPilot         # 编译后的可执行文件
 ├── run.sh                      # 编译+启动脚本
 └── README.md                   # 本文件
 ```
