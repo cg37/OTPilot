@@ -8,37 +8,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var menu: NSMenu!
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 请求通知权限并检查状态
-        requestNotificationPermission()
-        
-        // 启动时诊断通知状态（弹窗告知用户）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.startupNotificationDiagnostic()
-        }
-        
         // 初始化验证码管理器
         manager = CodeReaderManager()
-        
+
         // 创建菜单栏图标
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         updateStatusItemIcon()
-        
+
         // 创建菜单
         menu = NSMenu()
         statusItem.menu = menu
-        
+
         updateMenu()
-        
+
         // 定期更新菜单
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.updateMenu()
         }
-        
+
         print("OTPilot 已启动")
         print("正在监控短信验证码...")
-        
-        // 延迟检查权限（等菜单栏图标就绪后再弹窗）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+
+        // 请求通知权限（延迟确保 UI 就绪）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.requestNotificationPermission()
+        }
+
+        // 延迟检查全磁盘访问权限
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             self?.checkAndRequestFullDiskAccess()
         }
     }
@@ -95,22 +92,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         menu.addItem(NSMenuItem.separator())
-        
+
         // 操作菜单
         let refreshItem = NSMenuItem(title: "刷新", action: #selector(refreshCodes), keyEquivalent: "r")
         menu.addItem(refreshItem)
-        
+
         let copyLatestItem = NSMenuItem(title: "复制最新验证码", action: #selector(copyLatestCode), keyEquivalent: "c")
         menu.addItem(copyLatestItem)
-        
+
         menu.addItem(NSMenuItem.separator())
-        
+
         let permissionItem = NSMenuItem(title: "权限设置", action: #selector(openFullDiskAccessSettings), keyEquivalent: "")
         menu.addItem(permissionItem)
-        
-        let notifyDiagItem = NSMenuItem(title: "通知诊断", action: #selector(diagnoseNotificationStatus), keyEquivalent: "")
-        menu.addItem(notifyDiagItem)
-        
+
+        let notifyStatusItem = NSMenuItem(title: "通知诊断", action: #selector(diagnoseNotificationStatus), keyEquivalent: "")
+        menu.addItem(notifyStatusItem)
+
+        let resetNotifyItem = NSMenuItem(title: "重置通知权限", action: #selector(resetNotificationPermission), keyEquivalent: "")
+        menu.addItem(resetNotifyItem)
+
         let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         menu.addItem(quitItem)
     }
@@ -197,79 +197,60 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    /// 启动时弹出诊断对话框，告知用户当前通知状态
-    private func startupNotificationDiagnostic() {
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            DispatchQueue.main.async {
-                let statusText: String
-                switch settings.authorizationStatus {
-                case .notDetermined: statusText = "⏳ 尚未请求"
-                case .denied:        statusText = "❌ 已拒绝"
-                case .authorized:    statusText = "✅ 已授权"
-                case .provisional:   statusText = "🔶 临时授权"
-                case .ephemeral:     statusText = "📱 App Clips"
-                @unknown default:    statusText = "❓ 未知"
+    // MARK: - 通知权限
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            // 如果已经授权或临时授权，直接注册
+            if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
+                self?.registerAppInNotificationCenter()
+                return
+            }
+
+            // 如果被拒绝，提示用户重置
+            if settings.authorizationStatus == .denied {
+                print("⚠️ 通知权限已被拒绝，请通过菜单中的'重置通知权限'选项重置")
+                return
+            }
+
+            // 未请求过权限，发起请求
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+                if let error = error {
+                    print("通知权限请求失败: \(error.localizedDescription)")
+                    return
                 }
-                
-                let alert = NSAlert()
-                alert.messageText = "OTPilot 通知状态"
-                alert.informativeText = """
-                当前通知权限: \(statusText)
-                
-                如果显示"已拒绝"，请点击下方按钮重置权限。
-                如果显示"已授权"，则通知功能正常。
-                """
-                alert.alertStyle = .informational
-                alert.addButton(withTitle: "知道了")
-                if settings.authorizationStatus == .denied || settings.authorizationStatus == .notDetermined {
-                    alert.addButton(withTitle: "重置权限并重试")
-                }
-                
-                let response = alert.runModal()
-                if response == .alertSecondButtonReturn {
-                    // 用户点了"重置权限并重试"
-                    let cmd = "tccutil reset All com.otpilot.app"
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(cmd, forType: .string)
-                    
-                    let alert2 = NSAlert()
-                    alert2.messageText = "请手动重置权限"
-                    alert2.informativeText = """
-                    已复制命令到剪贴板。
-                    
-                    请打开终端，粘贴运行以下命令：
-                    \(cmd)
-                    
-                    然后退出 OTPilot 并重新启动。
-                    """
-                    alert2.alertStyle = .informational
-                    alert2.addButton(withTitle: "退出 OTPilot")
-                    alert2.addButton(withTitle: "稍后")
-                    if alert2.runModal() == .alertFirstButtonReturn {
-                        NSApplication.shared.terminate(nil)
+                if granted {
+                    print("✅ 通知权限已授予")
+                    DispatchQueue.main.async {
+                        self?.registerAppInNotificationCenter()
                     }
+                } else {
+                    print("⚠️ 未获得通知权限")
                 }
             }
         }
     }
-    
-    // MARK: - 通知权限
-    private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in
-            if let error = error {
-                print("通知权限请求失败: \(error.localizedDescription)")
-                return
-            }
-            if granted {
-                print("✅ 通知权限已授予")
-                // 发送一条静默通知让 app 注册到系统通知列表
-                self?.registerAppInNotificationCenter()
-            } else {
-                print("⚠️ 未获得通知权限")
-                DispatchQueue.main.async {
-                    self?.showNotificationDeniedAlert()
-                }
-            }
+
+    /// 重置通知权限（使用 tccutil）
+    @objc func resetNotificationPermission() {
+        let alert = NSAlert()
+        alert.messageText = "重置通知权限"
+        alert.informativeText = """
+        这将执行以下命令重置通知权限：
+
+            tccutil reset All com.otpilot.app
+
+        命令已复制到剪贴板，请打开终端粘贴运行。
+        运行后请重新启动 OTPilot 以重新请求权限。
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "复制命令并退出")
+        alert.addButton(withTitle: "取消")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("tccutil reset All com.otpilot.app", forType: .string)
+            NSApplication.shared.terminate(nil)
         }
     }
     

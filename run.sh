@@ -29,6 +29,12 @@ swiftc -target arm64-apple-macos13 \
 echo ""
 echo "✅ 编译完成"
 
+# Ad-hoc code sign the app (required for notifications to work)
+echo ""
+echo "🔐 签名应用..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+echo "✅ 签名完成"
+
 # Deploy to /Applications (overwrite if exists)
 if [ -d "$INSTALL_APP" ]; then
     rm -rf "$INSTALL_APP"
