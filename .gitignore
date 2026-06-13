@@ -11,6 +11,7 @@ OTPilot.app/Contents/Resources/
 
 # DMG build output
 build/
+*.dmg
 
 # Xcode
 *.xcuserdata/
