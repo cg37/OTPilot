@@ -1,18 +1,13 @@
 name: Build and Release
 
 permissions:
-  contents: write   # 允许创建 Release
+  contents: write # 允许创建 Release
 
 on:
   push:
     tags:
-      - "v*" # 推送 v1.0.0 等标签时触发
-  workflow_dispatch: # 允许手动触发
-    inputs:
-      version:
-        description: "版本号 (如 1.0.0)"
-        required: false
-        default: ""
+      - "v*"           # 推送 v1.0.0 等标签时自动构建 + 发布
+  workflow_dispatch:    # 手动触发时仅构建 DMG（不发布 Release）
 
 jobs:
   build:
@@ -24,12 +19,10 @@ jobs:
       - name: Set version
         id: version
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           else
-            echo "VERSION=0.0.0" >> $GITHUB_OUTPUT
+            echo "VERSION=$(date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
           fi
 
       - name: Build DMG
