@@ -36,6 +36,10 @@ swiftc -target arm64-apple-macos13 \
     -lsqlite3
 
 echo "✅ 编译完成"
+
+# Ad-hoc code signing (prevents "已损坏" Gatekeeper error)
+echo "🔏 签名..."
+codesign --sign - --force --deep "$APP_BUNDLE"
 echo ""
 
 # Create DMG staging directory
