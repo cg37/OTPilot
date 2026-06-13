@@ -12,28 +12,12 @@ class CodeReaderManager: ObservableObject {
     private let messagesDBPath = "~/Library/Messages/chat.db"
     
     init() {
-        requestNotificationPermission()
         loadExistingCodes()
         startMonitoring()
     }
     
     deinit {
         timer?.invalidate()
-    }
-    
-    // MARK: - Notification Permission
-    private func requestNotificationPermission() {
-        let group = DispatchGroup()
-        group.enter()
-        
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if let error = error {
-                print("通知权限请求失败: \(error.localizedDescription)")
-            }
-            group.leave()
-        }
-        
-        _ = group.wait(timeout: .now() + 5)
     }
     
     // MARK: - Database Reading

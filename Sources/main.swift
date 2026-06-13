@@ -11,6 +11,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 请求通知权限并检查状态
         requestNotificationPermission()
         
+        // 启动时诊断通知状态（弹窗告知用户）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.startupNotificationDiagnostic()
+        }
+        
         // 初始化验证码管理器
         manager = CodeReaderManager()
         
@@ -29,7 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.updateMenu()
         }
         
-        print("SMSCodeReader 已启动")
+        print("OTPilot 已启动")
         print("正在监控短信验证码...")
         
         // 延迟检查权限（等菜单栏图标就绪后再弹窗）
@@ -43,7 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if manager?.hasNewCode == true {
                 button.image = NSImage(systemSymbolName: "message.fill", accessibilityDescription: "新验证码")
             } else {
-                button.image = NSImage(systemSymbolName: "message", accessibilityDescription: "验证码监控")
+                button.image = NSImage(systemSymbolName: "message", accessibilityDescription: "OTPilot")
             }
             button.image?.isTemplate = true
         }
@@ -55,7 +60,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusItemIcon()
         
         // 标题
-        let titleItem = NSMenuItem(title: "验证码监控", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "OTPilot", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
         
@@ -140,7 +145,112 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             content: content,
             trigger: nil
         )
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("发送通知失败: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func sendTestNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "🔔 OTPilot 通知测试"
+        content.body = "如果你能看到这条通知，说明通知权限正常。"
+        content.sound = .default
+        
+        let request = UNNotificationRequest(
+            identifier: "test-" + UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("测试通知发送失败: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    let alert = NSAlert()
+                    alert.messageText = "通知发送失败"
+                    alert.informativeText = """
+                    错误: \(error.localizedDescription)
+                    
+                    通知权限可能被系统拒绝，请执行以下步骤重置：
+                    
+                    1. 打开终端，运行以下命令：
+                       tccutil reset All com.otpilot.app
+                    
+                    2. 重新启动 OTPilot 并允许通知权限
+                    """
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "复制命令")
+                    alert.addButton(withTitle: "打开通知设置")
+                    alert.addButton(withTitle: "关闭")
+                    let response = alert.runModal()
+                    if response == .alertFirstButtonReturn {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString("tccutil reset All com.otpilot.app", forType: .string)
+                    } else if response == .alertSecondButtonReturn {
+                        self.openNotificationSettings()
+                    }
+                }
+            } else {
+                print("✅ 测试通知已发送")
+            }
+        }
+    }
+    
+    /// 启动时弹出诊断对话框，告知用户当前通知状态
+    private func startupNotificationDiagnostic() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                let statusText: String
+                switch settings.authorizationStatus {
+                case .notDetermined: statusText = "⏳ 尚未请求"
+                case .denied:        statusText = "❌ 已拒绝"
+                case .authorized:    statusText = "✅ 已授权"
+                case .provisional:   statusText = "🔶 临时授权"
+                case .ephemeral:     statusText = "📱 App Clips"
+                @unknown default:    statusText = "❓ 未知"
+                }
+                
+                let alert = NSAlert()
+                alert.messageText = "OTPilot 通知状态"
+                alert.informativeText = """
+                当前通知权限: \(statusText)
+                
+                如果显示"已拒绝"，请点击下方按钮重置权限。
+                如果显示"已授权"，则通知功能正常。
+                """
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "知道了")
+                if settings.authorizationStatus == .denied || settings.authorizationStatus == .notDetermined {
+                    alert.addButton(withTitle: "重置权限并重试")
+                }
+                
+                let response = alert.runModal()
+                if response == .alertSecondButtonReturn {
+                    // 用户点了"重置权限并重试"
+                    let cmd = "tccutil reset All com.otpilot.app"
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(cmd, forType: .string)
+                    
+                    let alert2 = NSAlert()
+                    alert2.messageText = "请手动重置权限"
+                    alert2.informativeText = """
+                    已复制命令到剪贴板。
+                    
+                    请打开终端，粘贴运行以下命令：
+                    \(cmd)
+                    
+                    然后退出 OTPilot 并重新启动。
+                    """
+                    alert2.alertStyle = .informational
+                    alert2.addButton(withTitle: "退出 OTPilot")
+                    alert2.addButton(withTitle: "稍后")
+                    if alert2.runModal() == .alertFirstButtonReturn {
+                        NSApplication.shared.terminate(nil)
+                    }
+                }
+            }
+        }
     }
     
     // MARK: - 通知权限
@@ -166,9 +276,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// 发送一条即时消失的静默通知，让 app 出现在系统设置 > 通知列表中
     private func registerAppInNotificationCenter() {
         let content = UNMutableNotificationContent()
-        content.title = "SMSCodeReader"
+        content.title = "OTPilot"
         content.body = "验证码监控已就绪"
-        content.sound = nil
+        content.sound = .default
         
         let request = UNNotificationRequest(
             identifier: "app-register",
@@ -188,17 +298,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "需要通知权限"
         alert.informativeText = """
-        SMSCodeReader 需要通知权限才能显示验证码复制提醒。
+        OTPilot 需要通知权限才能显示验证码复制提醒。
         
-        请前往系统设置开启通知。
+        如果在系统设置中找不到 OTPilot，请在终端运行：
+            tccutil reset All com.otpilot.app
+        然后重新启动 OTPilot 即可重新弹出权限请求。
         """
         alert.alertStyle = .warning
+        alert.addButton(withTitle: "复制命令")
         alert.addButton(withTitle: "打开通知设置")
         alert.addButton(withTitle: "稍后")
         alert.icon = NSImage(systemSymbolName: "bell.badge", accessibilityDescription: nil)
         
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("tccutil reset All com.otpilot.app", forType: .string)
+        } else if response == .alertSecondButtonReturn {
             openNotificationSettings()
         }
     }
@@ -248,7 +364,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 
                 let response = alert.runModal()
                 if response == .alertFirstButtonReturn {
-                    self.showCopiedNotification(code: "000000")
+                    DispatchQueue.main.async {
+                        self.sendTestNotification()
+                    }
                 } else if response == .alertSecondButtonReturn {
                     self.openNotificationSettings()
                 }
@@ -288,7 +406,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "需要全磁盘访问权限"
         alert.informativeText = """
-        SMSCodeReader 需要"全磁盘访问"权限才能读取短信中的验证码。
+        OTPilot 需要"全磁盘访问"权限才能读取短信中的验证码。
         
         请在系统设置中授予权限后，返回本应用刷新即可。
         """
@@ -349,8 +467,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         container.addSubview(senderLabel)
         
         NSLayoutConstraint.activate([
-            // 验证码左对齐
-            codeLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            // 验证码左对齐（与菜单标准文字对齐）
+            codeLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
             codeLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             codeLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 120),
             
