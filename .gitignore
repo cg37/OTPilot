@@ -1,0 +1,21 @@
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+._*
+
+# Build artifacts (compiled binary inside .app bundle)
+SMSCodeReader.app/Contents/MacOS/
+SMSCodeReader.app/Contents/Resources/
+
+# Xcode
+*.xcuserdata/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
+# SwiftPM
+.build/
+Packages/
+Package.resolved
