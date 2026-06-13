@@ -9,6 +9,9 @@ Thumbs.db
 OTPilot.app/Contents/MacOS/
 OTPilot.app/Contents/Resources/
 
+# DMG build output
+build/
+
 # Xcode
 *.xcuserdata/
 *.xcodeproj/

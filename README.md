@@ -63,19 +63,26 @@ cd ~/Code/OTPilot
 
 ## 重新编译
 
-运行 `./run.sh` 会自动重新编译并部署到桌面。
+运行 `./run.sh` 会自动重新编译并部署到 `/Applications`。
 
-也可以手动编译:
+### 打包 DMG
 
 ```bash
-cd ~/Code/OTPilot
-swiftc -target arm64-apple-macos13 \
-    -o OTPilot.app/Contents/MacOS/OTPilot \
-    Sources/*.swift \
-    -framework AppKit \
-    -framework UserNotifications \
-    -lsqlite3
+./scripts/build-dmg.sh 1.0.0
 ```
+
+DMG 会生成到 `build/OTPilot-1.0.0.dmg`。
+
+### 通过 GitHub Actions 发布
+
+推送版本标签即可自动构建并发布：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions 会自动编译、打包 DMG 并创建 Release。
 
 ## 项目结构
 
