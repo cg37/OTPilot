@@ -3,13 +3,14 @@ import AppKit
 import UserNotifications
 import SQLite3
 
-class CodeReaderManager: ObservableObject {
+/// 验证码管理器：负责数据库读取、验证码匹配和监控
+final class CodeReaderManager {
     @Published var codes: [VerificationCode] = []
     @Published var hasNewCode: Bool = false
     
     private var timer: Timer?
     private var lastMessageID: Int64 = 0
-    private let messagesDBPath = "~/Library/Messages/chat.db"
+    private var dbConnection: OpaquePointer?
     
     init() {
         loadExistingCodes()
@@ -18,23 +19,78 @@ class CodeReaderManager: ObservableObject {
     
     deinit {
         timer?.invalidate()
+        closeDatabase()
     }
     
-    // MARK: - Database Reading
+    // MARK: - 数据库连接管理
+    
     private func getMessagesDBPath() -> String {
-        return (messagesDBPath as NSString).expandingTildeInPath
+        return (AppConstants.messagesDBPath as NSString).expandingTildeInPath
     }
+    
+    /// 获取或创建持久数据库连接
+    private func getDatabaseConnection() -> OpaquePointer? {
+        if let existing = dbConnection {
+            return existing
+        }
+        
+        let path = getMessagesDBPath()
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("⚠️ 数据库文件不存在: \(path)")
+            return nil
+        }
+        
+        var db: OpaquePointer?
+        // 使用 SQLITE_OPEN_READONLY 避免锁冲突
+        let flags = SQLITE_OPEN_READONLY
+        if sqlite3_open_v2(path, &db, flags, nil) == SQLITE_OK {
+            dbConnection = db
+            print("✅ 数据库连接已建立")
+            return db
+        } else {
+            let error = String(cString: sqlite3_errmsg(db))
+            print("⚠️ 数据库打开失败: \(error)")
+            sqlite3_close(db)
+            return nil
+        }
+    }
+    
+    private func closeDatabase() {
+        if let db = dbConnection {
+            sqlite3_close(db)
+            dbConnection = nil
+            print("🔒 数据库连接已关闭")
+        }
+    }
+    
+    /// 执行查询的通用方法
+    private func executeQuery(_ query: String, params: [Any] = []) -> OpaquePointer? {
+        guard let conn = getDatabaseConnection() else { return nil }
+        
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(conn, query, -1, &stmt, nil) == SQLITE_OK else {
+            let error = String(cString: sqlite3_errmsg(conn))
+            print("⚠️ SQL 准备失败: \(error)")
+            print("   查询: \(query)")
+            return nil
+        }
+        
+        // 绑定参数
+        for (index, param) in params.enumerated() {
+            let sqlIndex = Int32(index + 1)
+            if let intValue = param as? Int64 {
+                sqlite3_bind_int64(stmt, sqlIndex, intValue)
+            } else if let stringValue = param as? String {
+                sqlite3_bind_text(stmt, sqlIndex, stringValue, -1, nil)
+            }
+        }
+        
+        return stmt
+    }
+    
+    // MARK: - 验证码加载
     
     func loadExistingCodes() {
-        guard let dbPath = getMessagesDB(), let conn = openDatabase(dbPath) else {
-            print("无法打开 Messages 数据库，请确保:")
-            print("1. 已启用 iCloud 短信同步")
-            print("2. 已授予全磁盘访问权限")
-            print("数据库路径: \(getMessagesDBPath())")
-            return
-        }
-        defer { sqlite3_close(conn) }
-        
         let query = """
             SELECT m.rowid, h.id, m.text, m.date
             FROM message m
@@ -45,9 +101,10 @@ class CodeReaderManager: ObservableObject {
             LIMIT 100
         """
         
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(conn, query, -1, &stmt, nil) == SQLITE_OK else {
-            print("SQL 准备失败: \(String(cString: sqlite3_errmsg(conn)))")
+        guard let stmt = executeQuery(query) else {
+            print("⚠️ 无法加载验证码，请确保:")
+            print("   1. 已启用 iCloud 短信同步")
+            print("   2. 已授予全磁盘访问权限")
             return
         }
         defer { sqlite3_finalize(stmt) }
@@ -57,14 +114,12 @@ class CodeReaderManager: ObservableObject {
         
         while sqlite3_step(stmt) == SQLITE_ROW {
             let rowID = sqlite3_column_int64(stmt, 0)
-            let senderPtr = sqlite3_column_text(stmt, 1)
-            let textPtr = sqlite3_column_text(stmt, 2)
-            
-            guard let senderPtr = senderPtr, let textPtr = textPtr else { continue }
+            guard let senderPtr = sqlite3_column_text(stmt, 1),
+                  let textPtr = sqlite3_column_text(stmt, 2) else { continue }
             
             let sender = String(cString: senderPtr)
             let text = String(cString: textPtr)
-            let date = sqlite3_column_double(stmt, 3) + 978307200
+            let date = sqlite3_column_double(stmt, 3) + 978307200  // Apple epoch
             
             if rowID > maxID { maxID = rowID }
             
@@ -80,90 +135,63 @@ class CodeReaderManager: ObservableObject {
         }
         
         lastMessageID = maxID
-        self.codes = newCodes.prefix(20).map { $0 }
-        print("已加载 \(self.codes.count) 条验证码记录")
+        self.codes = Array(newCodes.prefix(AppConstants.maxHistoryCodes))
+        print("📥 已加载 \(self.codes.count) 条验证码记录")
     }
     
-    private func getMessagesDB() -> String? {
-        let path = getMessagesDBPath()
-        guard FileManager.default.fileExists(atPath: path) else {
-            print("数据库文件不存在: \(path)")
-            return nil
-        }
-        return path
-    }
+    // MARK: - 验证码提取
     
-    private func openDatabase(_ path: String) -> OpaquePointer? {
-        var db: OpaquePointer?
-        if sqlite3_open(path, &db) == SQLITE_OK {
-            return db
-        }
-        sqlite3_close(db)
-        return nil
-    }
-    
-    // MARK: - Verification Code Extraction
     func extractVerificationCode(_ text: String) -> String? {
-        let patterns = [
-            #"(?:验证码|校验码|确认码|安全码|动态码|激活码)[：:\s]*(\d{4,8})"#,
-            #"(?:code|Code|CODE)[：:\s]*(\d{4,8})"#,
-            #"(?:验证码|code|Code)[^\d]{0,10}(\d{4,8})"#,
-            #"\b(\d{4,6})\b"#
-        ]
-        
-        for pattern in patterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: []),
-               let match = regex.firstMatch(in: text, options: [], range: NSRange(text.startIndex..., in: text)) {
-                if match.numberOfRanges >= 2 {
-                    let codeRange = match.range(at: 1)
-                    if let range = Range(codeRange, in: text) {
-                        let code = String(text[range])
-                        if code.count >= 4 && code.count <= 8 {
-                            return code
-                        }
-                    }
-                }
+        for pattern in AppConstants.verificationCodePatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+                  let match = regex.firstMatch(
+                    in: text,
+                    options: [],
+                    range: NSRange(text.startIndex..., in: text)
+                  ),
+                  match.numberOfRanges >= 2,
+                  let codeRange = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+            
+            let code = String(text[codeRange])
+            if (AppConstants.minCodeLength...AppConstants.maxCodeLength).contains(code.count) {
+                return code
             }
         }
         return nil
     }
     
-    // MARK: - Monitoring
+    // MARK: - 监控
+    
     private func startMonitoring() {
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: AppConstants.monitorInterval, repeats: true) { [weak self] _ in
             self?.checkForNewMessages()
         }
         RunLoop.current.add(timer!, forMode: .common)
     }
     
     private func checkForNewMessages() {
-        guard let dbPath = getMessagesDB(), let conn = openDatabase(dbPath) else {
-            return
-        }
-        defer { sqlite3_close(conn) }
-        
+        // 使用参数化查询防止 SQL 注入
         let query = """
             SELECT m.rowid, h.id, m.text, m.date
             FROM message m
             LEFT JOIN handle h ON m.handle_id = h.rowid
-            WHERE m.rowid > \(lastMessageID)
+            WHERE m.rowid > ?
             AND m.text IS NOT NULL
             AND m.is_from_me = 0
             ORDER BY m.date ASC
         """
         
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(conn, query, -1, &stmt, nil) == SQLITE_OK else {
-            return
-        }
+        guard let stmt = executeQuery(query, params: [lastMessageID]) else { return }
         defer { sqlite3_finalize(stmt) }
+        
+        var foundNewCode = false
         
         while sqlite3_step(stmt) == SQLITE_ROW {
             let rowID = sqlite3_column_int64(stmt, 0)
-            let senderPtr = sqlite3_column_text(stmt, 1)
-            let textPtr = sqlite3_column_text(stmt, 2)
-            
-            guard let senderPtr = senderPtr, let textPtr = textPtr else { continue }
+            guard let senderPtr = sqlite3_column_text(stmt, 1),
+                  let textPtr = sqlite3_column_text(stmt, 2) else { continue }
             
             let sender = String(cString: senderPtr)
             let text = String(cString: textPtr)
@@ -182,7 +210,9 @@ class CodeReaderManager: ObservableObject {
                 )
                 
                 codes.insert(vc, at: 0)
-                if codes.count > 50 { codes.removeLast() }
+                if codes.count > AppConstants.maxHistoryCodes {
+                    codes.removeLast()
+                }
                 
                 copyToClipboard(code)
                 sendNotification(for: vc)
@@ -192,20 +222,27 @@ class CodeReaderManager: ObservableObject {
                     self.hasNewCode = false
                 }
                 
-                print("检测到验证码: \(code) 来自: \(vc.displaySender)")
+                foundNewCode = true
+                print("🔔 检测到验证码: \(code) 来自: \(vc.displaySender)")
             }
+        }
+        
+        if !foundNewCode {
+            // 静默检查，不输出日志
         }
     }
     
-    // MARK: - Clipboard
+    // MARK: - 剪贴板
+    
     func copyToClipboard(_ code: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(code, forType: .string)
-        print("验证码已复制到剪贴板: \(code)")
+        print("📋 验证码已复制到剪贴板: \(code)")
     }
     
-    // MARK: - Notification
+    // MARK: - 通知
+    
     private func sendNotification(for vc: VerificationCode) {
         let content = UNMutableNotificationContent()
         content.title = "🔐 验证码已复制"
@@ -220,12 +257,13 @@ class CodeReaderManager: ObservableObject {
         
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                print("通知发送失败: \(error.localizedDescription)")
+                print("⚠️ 通知发送失败: \(error.localizedDescription)")
             }
         }
     }
     
     func refreshCodes() {
+        print("🔄 手动刷新验证码...")
         loadExistingCodes()
     }
 }
