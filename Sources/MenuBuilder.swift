@@ -447,13 +447,24 @@ class MenuItemView: NSView {
     
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        
+
         if isHighlighted {
-            let highlightColor = NSColor.selectedContentBackgroundColor
-            highlightColor.setFill()
+            // 使用更明显的渐变高亮效果
+            let topColor = NSColor.systemBlue.withAlphaComponent(0.15)
+            let bottomColor = NSColor.systemBlue.withAlphaComponent(0.08)
+            
             let insetRect = bounds.insetBy(dx: 2, dy: 1)
             let path = NSBezierPath(roundedRect: insetRect, xRadius: 4, yRadius: 4)
-            path.fill()
+            path.addClip()
+            
+            let gradient = NSGradient(starting: topColor, ending: bottomColor)
+            gradient?.draw(in: bounds, angle: 90)
+            
+            // 添加边框增强视觉效果
+            let borderColor = NSColor.systemBlue.withAlphaComponent(0.3)
+            borderColor.setStroke()
+            path.lineWidth = 1
+            path.stroke()
         }
     }
 }

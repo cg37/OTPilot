@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(swift-menubar-app-optimization)",
+      "Bash(make *)"
+    ]
+  },
+  "$version": 4
+}
