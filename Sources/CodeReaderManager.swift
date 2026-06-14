@@ -142,6 +142,20 @@ final class CodeReaderManager {
     // MARK: - 验证码提取
     
     func extractVerificationCode(_ text: String) -> String? {
+        // 第一关: 短信必须包含至少一个验证码关键词，否则直接跳过
+        let keywordCheck = #"验证码|校验码|确认码|安全码|动态码|激活码|登录码|注册码|身份验证码|verification\s*code"#
+        guard text.range(of: keywordCheck, options: [.regularExpression, .caseInsensitive]) != nil else {
+            return nil
+        }
+        
+        // 第二关: 排除含手机号/订单号等非验证码内容的短信
+        for exclusionPattern in AppConstants.exclusionPatterns {
+            if text.range(of: exclusionPattern, options: .regularExpression) != nil {
+                return nil
+            }
+        }
+        
+        // 第三关: 用精确的验证码模式匹配
         for pattern in AppConstants.verificationCodePatterns {
             guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
                   let match = regex.firstMatch(
@@ -156,10 +170,30 @@ final class CodeReaderManager {
             
             let code = String(text[codeRange])
             if (AppConstants.minCodeLength...AppConstants.maxCodeLength).contains(code.count) {
+                // 最后确认: code 本身不是手机号片段的一部分
+                if isContainedInPhoneMask(text, code: code) {
+                    continue
+                }
                 return code
             }
         }
         return nil
+    }
+    
+    /// 检查 code 是否被包裹在手机号掩码中（如 166***6012）
+    private func isContainedInPhoneMask(_ text: String, code: String) -> Bool {
+        // 查找 code 在原文中出现的位置，检查前后是否有手机号掩码特征
+        let maskPatterns = [
+            #"\d{3}\*{2,4}\#(code)\b"#,
+            #"\b\#(code)\*{2,4}\d{3,4}"#,
+        ]
+        for pattern in maskPatterns {
+            let filledPattern = pattern.replacingOccurrences(of: "#(code)", with: code)
+            if text.range(of: filledPattern, options: .regularExpression) != nil {
+                return true
+            }
+        }
+        return false
     }
     
     // MARK: - 监控
