@@ -59,11 +59,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateStatusItemIcon() {
         if let button = statusItem.button {
             if manager?.hasNewCode == true {
-                button.image = NSImage(systemSymbolName: "message.fill", accessibilityDescription: "新验证码")
+                // 有新验证码时显示填充图标（高亮）
+                button.image = NSImage(systemSymbolName: "key.fill", accessibilityDescription: "新验证码")
+                button.image?.isTemplate = true
             } else {
-                button.image = NSImage(systemSymbolName: "message", accessibilityDescription: AppConstants.appName)
+                // 默认状态显示钥匙图标
+                button.image = NSImage(systemSymbolName: "key", accessibilityDescription: AppConstants.appName)
+                button.image?.isTemplate = true
             }
-            button.image?.isTemplate = true
         }
     }
     
