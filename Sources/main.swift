@@ -2,10 +2,13 @@ import Foundation
 import AppKit
 import UserNotifications
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     var manager: CodeReaderManager!
     var menu: NSMenu!
+
+    /// 当前高亮的 MenuItemView，用于追踪 hover 状态
+    private var highlightedView: MenuItemView?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 初始化验证码管理器
@@ -17,6 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 创建菜单
         menu = NSMenu()
+        menu.delegate = self
         statusItem.menu = menu
 
         updateMenu()
@@ -175,7 +179,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     通知权限可能被系统拒绝，请执行以下步骤重置：
                     
                     1. 打开终端，运行以下命令：
-                       tccutil reset All com.otpilot.app
+                        tccutil reset All com.otpilot.app
                     
                     2. 重新启动 OTPilot 并允许通知权限
                     """
@@ -355,6 +359,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    // MARK: - NSMenuDelegate (hover 效果)
+
+    func menuWillOpen(_ menu: NSMenu) {
+        highlightedView = nil
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        // 菜单关闭时清除所有高亮
+        if let view = highlightedView {
+            view.isHighlighted = false
+            highlightedView = nil
+        }
+    }
+
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        // 清除旧高亮
+        if let oldView = highlightedView {
+            oldView.isHighlighted = false
+        }
+
+        // 设置新高亮
+        if let item = item, let view = item.view as? MenuItemView {
+            view.isHighlighted = true
+            highlightedView = view
+        } else {
+            highlightedView = nil
+        }
+    }
+    
     @objc func quitApp() {
         NSApplication.shared.terminate(nil)
     }
@@ -410,18 +443,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     // MARK: - Custom Menu Item View
-    
+
     /// 可响应点击的自定义菜单视图，将点击转发给所在的 NSMenuItem
     private class MenuItemView: NSView {
+        var isHighlighted: Bool = false {
+            didSet {
+                if oldValue != isHighlighted {
+                    needsDisplay = true
+                }
+            }
+        }
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+        }
+
+        required init?(coder: NSCoder) {
+            super.init(coder: coder)
+            wantsLayer = true
+        }
+
         override func hitTest(_ point: NSPoint) -> NSView? {
             return self
         }
-        
+
         override func mouseUp(with event: NSEvent) {
             super.mouseUp(with: event)
             guard let item = enclosingMenuItem, item.action != nil else { return }
             NSApp.sendAction(item.action!, to: item.target, from: item)
             item.menu?.cancelTracking()
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+
+            if isHighlighted {
+                // macOS 原生菜单项选中颜色
+                let highlightColor = NSColor.selectedContentBackgroundColor
+                highlightColor.setFill()
+
+                let insetRect = bounds.insetBy(dx: 2, dy: 1)
+                let path = NSBezierPath(roundedRect: insetRect, xRadius: 4, yRadius: 4)
+                path.fill()
+            }
         }
     }
     
