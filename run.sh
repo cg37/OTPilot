@@ -57,5 +57,18 @@ echo ""
 echo "开始运行..."
 echo ""
 
+# 杀掉所有旧进程，确保加载最新编译的代码
+echo "🔄 停止旧进程..."
+killall OTPilot 2>/dev/null || true
+sleep 1
+
+# 确认进程已退出
+if pgrep -f "OTPilot" > /dev/null; then
+    echo "⚠️ 旧进程仍在运行，强制终止..."
+    killall -9 OTPilot 2>/dev/null || true
+    sleep 1
+fi
+
+echo "🚀 启动新版本..."
 # Launch the app bundle
 open "$INSTALL_APP"

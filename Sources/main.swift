@@ -9,6 +9,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 当前高亮的 MenuItemView，用于追踪 hover 状态
     private var highlightedView: MenuItemView?
+    /// hover 时在菜单左侧弹出的详情窗口
+    private var detailPanel: NSPanel?
+    /// 详情面板当前关联的菜单项视图
+    private weak var detailPanelTarget: MenuItemView?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 初始化验证码管理器
@@ -76,7 +80,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(headerItem)
             
             for (index, code) in codes.prefix(5).enumerated() {
-                let itemView = makeCodeItemView(code: code.code, sender: code.displaySender, isHeader: false)
+                let itemView = makeCodeItemView(code: code.code, sender: code.displaySender, message: code.message, timestamp: code.timestamp, isHeader: false)
                 let item = NSMenuItem(title: "", action: #selector(copyCode(_:)), keyEquivalent: "")
                 item.view = itemView
                 item.representedObject = code.code
@@ -359,18 +363,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     
-    // MARK: - NSMenuDelegate (hover 效果)
+    // MARK: - NSMenuDelegate (hover 效果 + 详情面板)
 
     func menuWillOpen(_ menu: NSMenu) {
         highlightedView = nil
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        // 菜单关闭时清除所有高亮
+        // 菜单关闭时清除所有高亮和详情面板
         if let view = highlightedView {
             view.isHighlighted = false
             highlightedView = nil
         }
+        hideDetailPanel()
     }
 
     func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
@@ -383,9 +388,177 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let item = item, let view = item.view as? MenuItemView {
             view.isHighlighted = true
             highlightedView = view
-        } else {
+            showDetailPanel(for: view, item: item)
+        } else if item != nil {
+            // 高亮到非验证码条目（如"刷新"、"退出"等），隐藏面板
             highlightedView = nil
+            hideDetailPanel()
         }
+        // item == nil 时不隐藏面板：用户可能正将鼠标移向详情面板
+    }
+    
+    // MARK: - 详情面板
+    
+    private func showDetailPanel(for view: MenuItemView, item: NSMenuItem) {
+        guard !view.isHeader, !view.messageText.isEmpty else {
+            hideDetailPanel()
+            return
+        }
+        
+        // 如果已有面板且对应同一个 view，不重复创建
+        if let existing = detailPanel, existing.isVisible,
+           detailPanelTarget == view {
+            return
+        }
+        
+        hideDetailPanel()
+        
+        // 获取菜单项在屏幕中的位置
+        guard let menuWindow = view.window else { return }
+        let viewFrameInScreen = menuWindow.convertToScreen(view.convert(view.bounds, to: nil))
+        
+        let panelWidth: CGFloat = 280
+        let timeStr: String
+        if let date = view.timestampDate {
+            timeStr = formatTimestamp(date)
+        } else {
+            timeStr = ""
+        }
+        print("📋 showDetailPanel: code=\(view.codeText), sender=\(view.senderText), timestamp=\(timeStr), msgLen=\(view.messageText.count)")
+        let contentView = makeDetailContentView(code: view.codeText,
+                                                 sender: view.senderText,
+                                                 message: view.messageText,
+                                                 timestamp: timeStr,
+                                                 width: panelWidth)
+        
+        // 面板放在菜单项左侧，垂直居中对齐
+        let panelX = viewFrameInScreen.minX - panelWidth - 12
+        let panelY = viewFrameInScreen.midY - contentView.frame.height / 2
+        
+        let panel = NSPanel(
+            contentRect: NSRect(x: panelX, y: panelY, width: panelWidth, height: contentView.frame.height),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .floating
+        panel.hasShadow = true
+        panel.animationBehavior = .utilityWindow
+        detailPanelTarget = view
+        
+        // 添加 Visual Effect 背景
+        let visualEffect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: contentView.frame.height))
+        visualEffect.material = .menu
+        visualEffect.blendingMode = .behindWindow
+        visualEffect.state = .active
+        visualEffect.wantsLayer = true
+        visualEffect.layer?.cornerRadius = 8
+        visualEffect.layer?.masksToBounds = true
+        panel.contentView = visualEffect
+        
+        visualEffect.addSubview(contentView)
+        
+        panel.orderFront(nil)
+        detailPanel = panel
+    }
+    
+    private func hideDetailPanel() {
+        detailPanel?.close()
+        detailPanel = nil
+        detailPanelTarget = nil
+    }
+    
+    /// 计算文本在指定宽度下换行后的高度
+    private func calculateTextHeight(text: String, font: NSFont, width: CGFloat) -> CGFloat {
+        let size = (text as NSString).boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        )
+        return ceil(size.height)
+    }
+    
+    /// 构建详情面板内容视图
+    private func makeDetailContentView(code: String, sender: String, message: String, timestamp: String, width: CGFloat) -> NSView {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 10))
+        
+        let margin: CGFloat = 16
+        var y: CGFloat = 12
+        
+        // --- 第一行: 图标 + 发送者 + 时间 ---
+        let iconView = NSImageView(image: NSImage(systemSymbolName: "message.fill", accessibilityDescription: nil)!)
+        iconView.frame = NSRect(x: margin, y: y, width: 18, height: 18)
+        iconView.contentTintColor = .secondaryLabelColor
+        container.addSubview(iconView)
+        
+        let senderLabel = NSTextField(labelWithString: sender)
+        senderLabel.frame = NSRect(x: margin + 24, y: y - 1, width: width - margin * 2 - 24, height: 18)
+        senderLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        senderLabel.textColor = .labelColor
+        senderLabel.lineBreakMode = .byTruncatingTail
+        container.addSubview(senderLabel)
+        y += 20
+        
+        // --- 第二行: 时间 ---
+        let timeDisplay = timestamp.isEmpty ? "时间未知" : timestamp
+        let timeLabel = NSTextField(labelWithString: timeDisplay)
+        timeLabel.frame = NSRect(x: margin + 24, y: y, width: width - margin * 2 - 24, height: 15)
+        timeLabel.font = NSFont.systemFont(ofSize: 12)
+        timeLabel.textColor = .labelColor
+        container.addSubview(timeLabel)
+        y += 20
+        
+        // --- 分隔线 ---
+        let separator = NSBox(frame: NSRect(x: margin, y: y, width: width - margin * 2, height: 1))
+        separator.boxType = .separator
+        container.addSubview(separator)
+        y += 12
+        
+        // --- 短信内容 ---
+        let msgWidth = width - margin * 2
+        let msgFont = NSFont.systemFont(ofSize: 12)
+        let msgHeight = self.calculateTextHeight(text: message, font: msgFont, width: msgWidth)
+        
+        let msgLabel = NSTextField(frame: NSRect(x: margin, y: y, width: msgWidth, height: msgHeight))
+        msgLabel.isEditable = false
+        msgLabel.isBordered = false
+        msgLabel.drawsBackground = false
+        msgLabel.font = msgFont
+        msgLabel.textColor = .labelColor
+        msgLabel.stringValue = message
+        msgLabel.lineBreakMode = .byWordWrapping
+        msgLabel.usesSingleLineMode = false
+        msgLabel.cell?.wraps = true
+        container.addSubview(msgLabel)
+        y += msgHeight + 12
+        
+        // --- 分隔线 ---
+        let separator2 = NSBox(frame: NSRect(x: margin, y: y, width: width - margin * 2, height: 1))
+        separator2.boxType = .separator
+        container.addSubview(separator2)
+        y += 12
+        
+        // --- 验证码 ---
+        let codeTitleLabel = NSTextField(labelWithString: "验证码")
+        codeTitleLabel.frame = NSRect(x: margin, y: y, width: 50, height: 16)
+        codeTitleLabel.font = NSFont.systemFont(ofSize: 11)
+        codeTitleLabel.textColor = .secondaryLabelColor
+        container.addSubview(codeTitleLabel)
+        
+        let codeValueLabel = NSTextField(labelWithString: code)
+        codeValueLabel.frame = NSRect(x: margin + 54, y: y, width: width - margin * 2 - 54, height: 16)
+        codeValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        codeValueLabel.textColor = .labelColor
+        container.addSubview(codeValueLabel)
+        y += 24
+        
+        // 设置最终高度
+        container.frame.size.height = y + 4
+        
+        return container
     }
     
     @objc func quitApp() {
@@ -454,6 +627,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        /// 验证码文本
+        var codeText: String = ""
+        /// 完整短信内容（用于详情面板）
+        var messageText: String = ""
+        /// 发送者名称（用于详情面板）
+        var senderText: String = ""
+        /// 时间文本（用于详情面板）
+        var timestampText: String = ""
+        /// 原始时间戳（用于详情面板格式化）
+        var timestampDate: Date?
+        /// 是否为表头行
+        var isHeader: Bool = false
+
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
@@ -479,10 +665,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             super.draw(dirtyRect)
 
             if isHighlighted {
-                // macOS 原生菜单项选中颜色
                 let highlightColor = NSColor.selectedContentBackgroundColor
                 highlightColor.setFill()
-
                 let insetRect = bounds.insetBy(dx: 2, dy: 1)
                 let path = NSBezierPath(roundedRect: insetRect, xRadius: 4, yRadius: 4)
                 path.fill()
@@ -490,8 +674,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     
-    private func makeCodeItemView(code: String, sender: String, isHeader: Bool) -> NSView {
+    private func formatTimestamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日 HH:mm:ss"
+        let result = formatter.string(from: date)
+        print("🕐 formatTimestamp: \(result)")
+        return result
+    }
+    
+    private func makeCodeItemView(code: String, sender: String, message: String = "", timestamp: Date? = nil, isHeader: Bool = false) -> NSView {
         let container = MenuItemView(frame: NSRect(x: 0, y: 0, width: 260, height: 22))
+        container.codeText = code
+        container.messageText = message
+        container.senderText = sender
+        container.timestampDate = timestamp
+        container.isHeader = isHeader
         
         let codeLabel = NSTextField(labelWithString: code)
         codeLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -513,12 +711,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         container.addSubview(senderLabel)
         
         NSLayoutConstraint.activate([
-            // 验证码左对齐（与菜单标准文字对齐）
             codeLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
             codeLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             codeLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 120),
             
-            // 来源右对齐
             senderLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             senderLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             senderLabel.leadingAnchor.constraint(greaterThanOrEqualTo: codeLabel.trailingAnchor, constant: 16),
