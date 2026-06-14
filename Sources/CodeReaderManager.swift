@@ -453,7 +453,7 @@ final class CodeReaderManager {
         let content = UNMutableNotificationContent()
         content.title = "🔐 验证码已复制"
         content.body = "来自 \(vc.displaySender): \(vc.code)"
-        content.sound = .default
+        content.sound = nil
         
         let request = UNNotificationRequest(
             identifier: UUID().uuidString,

@@ -68,7 +68,7 @@ final class PermissionManager {
                 return
             }
             
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge]) { granted, error in
                 if let error = error {
                     print("⚠️ 通知权限请求失败: \(error.localizedDescription)")
                     DispatchQueue.main.async { completion(false) }
@@ -83,7 +83,7 @@ final class PermissionManager {
         let content = UNMutableNotificationContent()
         content.title = "OTPilot"
         content.body = "验证码监控已就绪"
-        content.sound = .default
+        content.sound = nil
         
         let request = UNNotificationRequest(
             identifier: "app-register",
@@ -173,7 +173,7 @@ final class PermissionManager {
         let content = UNMutableNotificationContent()
         content.title = "🔔 OTPilot 通知测试"
         content.body = "如果你能看到这条通知，说明通知权限正常。"
-        content.sound = .default
+        content.sound = nil
         
         let request = UNNotificationRequest(
             identifier: "test-" + UUID().uuidString,
