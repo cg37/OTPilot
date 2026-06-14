@@ -69,6 +69,7 @@ final class MenuBuilder {
                 isHeader: false
             )
             let item = NSMenuItem(title: "", action: #selector(MenuActions.copyCode(_:)), keyEquivalent: "")
+            item.target = MenuActions.self
             item.view = itemView
             item.representedObject = code.code
             item.tag = index
@@ -89,25 +90,31 @@ final class MenuBuilder {
     
     private func buildActionsSection(menu: NSMenu) {
         let refreshItem = NSMenuItem(title: "刷新", action: #selector(MenuActions.refreshCodes), keyEquivalent: "r")
+        refreshItem.target = MenuActions.self
         menu.addItem(refreshItem)
         
         let copyLatestItem = NSMenuItem(title: "复制最新验证码", action: #selector(MenuActions.copyLatestCode), keyEquivalent: "c")
+        copyLatestItem.target = MenuActions.self
         menu.addItem(copyLatestItem)
         
         menu.addItem(NSMenuItem.separator())
         
         let permissionItem = NSMenuItem(title: "权限设置", action: #selector(MenuActions.openFullDiskAccessSettings), keyEquivalent: "")
+        permissionItem.target = MenuActions.self
         menu.addItem(permissionItem)
         
         let notifyStatusItem = NSMenuItem(title: "通知诊断", action: #selector(MenuActions.diagnoseNotificationStatus), keyEquivalent: "")
+        notifyStatusItem.target = MenuActions.self
         menu.addItem(notifyStatusItem)
         
         let resetNotifyItem = NSMenuItem(title: "重置通知权限", action: #selector(MenuActions.resetNotificationPermission), keyEquivalent: "")
+        resetNotifyItem.target = MenuActions.self
         menu.addItem(resetNotifyItem)
         
         menu.addItem(NSMenuItem.separator())
         
         let quitItem = NSMenuItem(title: "退出", action: #selector(MenuActions.quitApp), keyEquivalent: "q")
+        quitItem.target = MenuActions.self
         menu.addItem(quitItem)
     }
     
@@ -119,6 +126,7 @@ final class MenuBuilder {
         container.messageText = message
         container.senderText = sender
         container.timestampDate = timestamp
+        container.timestampText = timestamp.map { formatTimestamp($0) } ?? ""
         container.isHeader = isHeader
         
         let codeLabel = NSTextField(labelWithString: code)
@@ -129,6 +137,7 @@ final class MenuBuilder {
         codeLabel.textColor = isHeader ? .secondaryLabelColor : .labelColor
         codeLabel.lineBreakMode = .byTruncatingTail
         container.addSubview(codeLabel)
+        container.codeLabel = codeLabel
         
         let senderLabel = NSTextField(labelWithString: sender)
         senderLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -139,6 +148,7 @@ final class MenuBuilder {
         senderLabel.lineBreakMode = .byTruncatingTail
         senderLabel.alignment = .right
         container.addSubview(senderLabel)
+        container.senderLabel = senderLabel
         
         NSLayoutConstraint.activate([
             codeLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
@@ -200,8 +210,11 @@ final class MenuBuilder {
         guard let menuWindow = view.window else { return }
         let viewFrameInScreen = menuWindow.convertToScreen(view.convert(view.bounds, to: nil))
         
+        // 优先使用创建 view 时预格式化的时间戳文本，确保数据一致性
         let timeStr: String
-        if let date = view.timestampDate {
+        if !view.timestampText.isEmpty {
+            timeStr = view.timestampText
+        } else if let date = view.timestampDate {
             timeStr = formatTimestamp(date)
         } else {
             timeStr = ""
@@ -411,60 +424,55 @@ final class MenuBuilder {
 class MenuItemView: NSView {
     var isHighlighted: Bool = false {
         didSet {
-            if oldValue != isHighlighted {
-                needsDisplay = true
-            }
+            guard oldValue != isHighlighted else { return }
+            needsDisplay = true
+            // 原生菜单行为：高亮时切换文字颜色为白色
+            let textColor: NSColor = isHighlighted ? .selectedMenuItemTextColor : .labelColor
+            let secondaryColor: NSColor = isHighlighted ? .selectedMenuItemTextColor.withAlphaComponent(0.85) : .secondaryLabelColor
+            codeLabel?.textColor = textColor
+            senderLabel?.textColor = secondaryColor
         }
     }
-    
+
     var codeText: String = ""
     var messageText: String = ""
     var senderText: String = ""
     var timestampText: String = ""
     var timestampDate: Date?
     var isHeader: Bool = false
-    
+
+    weak var codeLabel: NSTextField?
+    weak var senderLabel: NSTextField?
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
     }
-    
+
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         wantsLayer = true
     }
-    
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        return self
-    }
-    
+
     override func mouseUp(with event: NSEvent) {
+        // 将点击事件转发给 enclosing NSMenuItem，触发其 action
+        if let item = self.enclosingMenuItem, let action = item.action {
+            NSApp.sendAction(action, to: item.target, from: item)
+            // 点击后关闭菜单
+            item.menu?.cancelTracking()
+        }
         super.mouseUp(with: event)
-        guard let item = enclosingMenuItem, item.action != nil else { return }
-        NSApp.sendAction(item.action!, to: item.target, from: item)
-        item.menu?.cancelTracking()
     }
-    
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
         if isHighlighted {
-            // 使用更明显的渐变高亮效果
-            let topColor = NSColor.systemBlue.withAlphaComponent(0.15)
-            let bottomColor = NSColor.systemBlue.withAlphaComponent(0.08)
-            
+            // 原生 macOS 菜单高亮：solid selectedContentBackgroundColor + system 圆角
             let insetRect = bounds.insetBy(dx: 2, dy: 1)
-            let path = NSBezierPath(roundedRect: insetRect, xRadius: 4, yRadius: 4)
-            path.addClip()
-            
-            let gradient = NSGradient(starting: topColor, ending: bottomColor)
-            gradient?.draw(in: bounds, angle: 90)
-            
-            // 添加边框增强视觉效果
-            let borderColor = NSColor.systemBlue.withAlphaComponent(0.3)
-            borderColor.setStroke()
-            path.lineWidth = 1
-            path.stroke()
+            let path = NSBezierPath(roundedRect: insetRect, xRadius: 5, yRadius: 5)
+            NSColor.selectedContentBackgroundColor.setFill()
+            path.fill()
         }
     }
 }
