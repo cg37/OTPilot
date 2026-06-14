@@ -125,4 +125,13 @@ Provide standard targets: `build`, `run`, `clean`, `dmg`, `release`, `help`. Pas
 - **Missing `import UserNotifications`**: The `MenuBuilder` file needs this import if it sends notifications — easy to forget when splitting files.
 - **`[weak self]` warnings**: Remove `weak self` in closures where `self` is never actually used (compiler warns but doesn't error).
 - **`sqlite3_open` vs `sqlite3_open_v2`**: Use `open_v2` with explicit flags; plain `open` defaults to readwrite which can lock out the Messages app.
-- **Apple epoch offset**: Messages `date` column uses Apple's epoch (2001-01-01), add `978307200` seconds to convert to Unix timestamp.
+- **Apple Messages `date` column is nanoseconds, not seconds**: The `message.date` column stores timestamps as **integer nanoseconds** since Apple epoch (2001-01-01). You MUST divide by `1_000_000_000.0` before adding the epoch offset `978307200` to get a valid Unix timestamp. Treating it as seconds produces dates ~25 million years in the future:
+  ```swift
+  // WRONG: treats nanoseconds as seconds → year 25526617
+  let date = sqlite3_column_double(stmt, 3) + 978307200
+
+  // CORRECT: convert nanoseconds to seconds first
+  let dateInSeconds = sqlite3_column_double(stmt, 3) / 1_000_000_000.0
+  let unixTimestamp = dateInSeconds + 978307200
+  ```
+- **Do NOT override `hitTest` / `mouseUp` in `NSMenuItem.view`**: Subclassing `NSView` for a menu item's view and overriding `hitTest(_:)` or `mouseUp(with:)` will intercept mouse events and break the menu's built-in click/action routing. The `NSMenu` system handles click events through `NSMenuItem.action` automatically — custom hit testing only breaks it. Use `NSMenuDelegate.menu(_:willHighlight:)` for hover effects instead.

@@ -91,6 +91,9 @@ final class CodeReaderManager {
     // MARK: - 验证码加载
     
     func loadExistingCodes() {
+        // 先输出调试信息：查看数据库中实际的消息
+        printDebugMessages()
+        
         let query = """
             SELECT m.rowid, h.id, m.text, m.date
             FROM message m
@@ -100,43 +103,210 @@ final class CodeReaderManager {
             ORDER BY m.date DESC
             LIMIT 100
         """
-        
+
         guard let stmt = executeQuery(query) else {
-            print("⚠️ 无法加载验证码，请确保:")
-            print("   1. 已启用 iCloud 短信同步")
-            print("   2. 已授予全磁盘访问权限")
+            NSLog("⚠️ 无法加载验证码，请确保:")
+            NSLog("   1. 已启用 iCloud 短信同步")
+            NSLog("   2. 已授予全磁盘访问权限")
             return
         }
         defer { sqlite3_finalize(stmt) }
-        
+
         var newCodes: [VerificationCode] = []
         var maxID: Int64 = 0
-        
+        var totalMessagesScanned = 0
+
         while sqlite3_step(stmt) == SQLITE_ROW {
+            totalMessagesScanned += 1
             let rowID = sqlite3_column_int64(stmt, 0)
             guard let senderPtr = sqlite3_column_text(stmt, 1),
                   let textPtr = sqlite3_column_text(stmt, 2) else { continue }
-            
+
             let sender = String(cString: senderPtr)
             let text = String(cString: textPtr)
-            let date = sqlite3_column_double(stmt, 3) + 978307200  // Apple epoch
-            
+            // Apple date 是纳秒级时间戳，需要转换为秒
+            let dateInSeconds = sqlite3_column_double(stmt, 3) / 1_000_000_000.0
+            let unixTimestamp = dateInSeconds + 978307200  // Apple epoch (2001-01-01) to Unix epoch (1970-01-01)
+
             if rowID > maxID { maxID = rowID }
-            
+
             if let code = extractVerificationCode(text) {
                 let vc = VerificationCode(
                     code: code,
                     sender: sender,
                     message: text,
-                    timestamp: Date(timeIntervalSince1970: date)
+                    timestamp: Date(timeIntervalSince1970: unixTimestamp)
                 )
                 newCodes.append(vc)
             }
         }
-        
+
         lastMessageID = maxID
         self.codes = Array(newCodes.prefix(AppConstants.maxHistoryCodes))
-        print("📥 已加载 \(self.codes.count) 条验证码记录")
+        NSLog("📥 扫描了 \(totalMessagesScanned) 条消息，加载了 \(self.codes.count) 条验证码记录")
+    }
+    
+    /// 调试：输出最近消息到文件，帮助排查问题
+    private func printDebugMessages() {
+        // 先查看数据库的 date 列实际存储情况
+        let dateCheckQuery = """
+            SELECT m.rowid, m.date, typeof(m.date), h.id, substr(m.text, 1, 50)
+            FROM message m
+            LEFT JOIN handle h ON m.handle_id = h.rowid
+            WHERE m.text IS NOT NULL
+            ORDER BY m.rowid DESC
+            LIMIT 10
+        """
+        
+        if let stmt = executeQuery(dateCheckQuery) {
+            defer { sqlite3_finalize(stmt) }
+            NSLog("=== Date 列类型检查 ===")
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let rowid = sqlite3_column_int64(stmt, 0)
+                let dateVal = sqlite3_column_double(stmt, 1)
+                let dateType = String(cString: sqlite3_column_text(stmt, 2))
+                let sender = sqlite3_column_text(stmt, 3) != nil ? String(cString: sqlite3_column_text(stmt, 3)) : "(nil)"
+                let textPreview = String(cString: sqlite3_column_text(stmt, 4))
+                
+                NSLog("  rowid=\(rowid) date=\(dateVal) (typeof: \(dateType)) sender=\(sender)")
+                NSLog("    text=\(textPreview)")
+            }
+            NSLog("=== Date 列检查结束 ===")
+        }
+        
+        // 统计信息
+        let statsQuery = """
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN m.date IS NULL OR m.date = 0 THEN 1 ELSE 0 END) as no_date,
+                   SUM(CASE WHEN m.date > 0 THEN 1 ELSE 0 END) as has_date,
+                   MAX(m.date) as max_date,
+                   MIN(m.date) as min_date
+            FROM message m
+            WHERE m.text IS NOT NULL
+        """
+
+        if let stmt = executeQuery(statsQuery) {
+            defer { sqlite3_finalize(stmt) }
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                let total = sqlite3_column_int(stmt, 0)
+                let noDate = sqlite3_column_int(stmt, 1)
+                let hasDate = sqlite3_column_int(stmt, 2)
+                let maxDate = sqlite3_column_double(stmt, 3)
+                let minDate = sqlite3_column_double(stmt, 4)
+
+                if maxDate > 0 {
+                    // Apple date 是纳秒，需要转换为秒
+                    let maxDateInSeconds = maxDate / 1_000_000_000.0
+                    let minDateInSeconds = minDate / 1_000_000_000.0
+                    let maxDateObj = Date(timeIntervalSince1970: maxDateInSeconds + 978307200)
+                    let minDateObj = Date(timeIntervalSince1970: minDateInSeconds + 978307200)
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                    let maxStr = formatter.string(from: maxDateObj)
+                    let minStr = formatter.string(from: minDateObj)
+                    NSLog("📊 数据库统计: 共 \(total) 条, 有日期: \(hasDate), 无日期: \(noDate)")
+                    NSLog("📊 消息时间范围: 最早 \(minStr) → 最新 \(maxStr)")
+                } else {
+                    NSLog("📊 数据库统计: 共 \(total) 条, 有日期: \(hasDate), 无日期: \(noDate), 最新日期: 无有效日期")
+                }
+            }
+        }
+        
+        // 查找小米相关短信
+        let xiaomiQuery = """
+            SELECT m.rowid, h.id, m.text, m.date, m.is_from_me
+            FROM message m
+            LEFT JOIN handle h ON m.handle_id = h.rowid
+            WHERE m.text LIKE '%小米%' OR m.text LIKE '%323506%' OR m.text LIKE '%246337%'
+            ORDER BY m.date DESC
+            LIMIT 10
+        """
+        
+        if let stmt = executeQuery(xiaomiQuery) {
+            defer { sqlite3_finalize(stmt) }
+            NSLog("=== 小米相关短信 ===")
+            var xiaomiCount = 0
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                xiaomiCount += 1
+                let rowid = sqlite3_column_int64(stmt, 0)
+                let sender = sqlite3_column_text(stmt, 1) != nil ? String(cString: sqlite3_column_text(stmt, 1)) : "(nil)"
+                let text = String(cString: sqlite3_column_text(stmt, 2))
+                let date = sqlite3_column_double(stmt, 3)
+                let isFromMe = sqlite3_column_int(stmt, 4)
+                
+                let dateInSeconds = date / 1_000_000_000.0
+                let dateObj = Date(timeIntervalSince1970: dateInSeconds + 978307200)
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                let timeStr = formatter.string(from: dateObj)
+                
+                let direction = isFromMe == 1 ? "📤发送" : "📥接收"
+                NSLog("  [\(xiaomiCount)] rowid=\(rowid) \(direction) \(sender) \(timeStr)")
+                NSLog("      \(text)")
+            }
+            if xiaomiCount == 0 {
+                NSLog("  ⚠️ 数据库中没有找到小米相关短信！可能还没同步到 Mac")
+            }
+            NSLog("=== 小米短信查询结束 ===")
+        }
+        
+        // 按 rowid 排序查看最近的消息
+        let debugQuery = """
+            SELECT m.rowid, h.id, m.text, m.date, m.is_from_me
+            FROM message m
+            LEFT JOIN handle h ON m.handle_id = h.rowid
+            WHERE m.text IS NOT NULL
+            ORDER BY m.rowid DESC
+            LIMIT 20
+        """
+        
+        guard let stmt = executeQuery(debugQuery) else {
+            NSLog("⚠️ 无法执行调试查询")
+            return
+        }
+        defer { sqlite3_finalize(stmt) }
+        
+        var debugLines: [String] = []
+        debugLines.append("=== 按 rowid 排序最近 20 条消息 ===")
+        
+        var count = 0
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            count += 1
+            let rowid = sqlite3_column_int64(stmt, 0)
+            let sender = sqlite3_column_text(stmt, 1) != nil ? String(cString: sqlite3_column_text(stmt, 1)) : "(nil)"
+            let text = String(cString: sqlite3_column_text(stmt, 2))
+            let date = sqlite3_column_double(stmt, 3)
+            let isFromMe = sqlite3_column_int(stmt, 4)
+            
+            let timeStr: String
+            if date > 0 {
+                // Apple date 是纳秒，需要转换为秒
+                let dateInSeconds = date / 1_000_000_000.0
+                let dateObj = Date(timeIntervalSince1970: dateInSeconds + 978307200)
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                timeStr = formatter.string(from: dateObj)
+            } else {
+                timeStr = "(无日期 date=\(date))"
+            }
+            
+            let direction = isFromMe == 1 ? "📤发送" : "📥接收"
+            let displayText = text.count > 100 ? String(text.prefix(100)) + "..." : text
+            let hasKeyword = text.range(of: #"验证码|校验码|确认码"#, options: [.regularExpression, .caseInsensitive]) != nil ? "⭐" : ""
+            
+            debugLines.append("  [\(count)] rowid=\(rowid) \(direction) \(sender) \(timeStr) \(hasKeyword)")
+            debugLines.append("      \(displayText)")
+        }
+        debugLines.append("=== 调试结束 ===")
+        
+        // 写入文件
+        let debugContent = debugLines.joined(separator: "\n")
+        let debugPath = "/tmp/otpilot_debug.log"
+        try? debugContent.write(toFile: debugPath, atomically: true, encoding: .utf8)
+        
+        for line in debugLines {
+            NSLog(line)
+        }
     }
     
     // MARK: - 验证码提取
@@ -229,7 +399,9 @@ final class CodeReaderManager {
             
             let sender = String(cString: senderPtr)
             let text = String(cString: textPtr)
-            let date = sqlite3_column_double(stmt, 3) + 978307200
+            // Apple date 是纳秒级时间戳，需要转换为秒
+            let dateInSeconds = sqlite3_column_double(stmt, 3) / 1_000_000_000.0
+            let unixTimestamp = dateInSeconds + 978307200
             
             if rowID > lastMessageID {
                 lastMessageID = rowID
@@ -240,7 +412,7 @@ final class CodeReaderManager {
                     code: code,
                     sender: sender,
                     message: text,
-                    timestamp: Date(timeIntervalSince1970: date)
+                    timestamp: Date(timeIntervalSince1970: unixTimestamp)
                 )
                 
                 codes.insert(vc, at: 0)
