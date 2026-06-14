@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Skill(swift-menubar-app-optimization)",
-      "Bash(make *)"
+      "Bash(make *)",
+      "Bash(killall *)",
+      "Bash(true)",
+      "Monitor(/applications/otpilot.app/contents/macos/otpilot)",
+      "Bash(log *)",
+      "Bash(sleep *)",
+      "Bash(/applications/otpilot.app/contents/macos/otpilot)",
+      "Bash(cat *)"
     ]
   },
   "$version": 4
