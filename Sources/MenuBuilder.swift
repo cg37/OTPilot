@@ -68,11 +68,12 @@ final class MenuBuilder {
                 timestamp: code.timestamp,
                 isHeader: false
             )
-            let item = NSMenuItem(title: "", action: #selector(MenuActions.copyCode(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: "", action: #selector(MenuActions.showDetailAndCopyCode(_:)), keyEquivalent: "")
             item.target = MenuActions.self
             item.view = itemView
             item.representedObject = code.code
             item.tag = index
+            item.toolTip = "点击查看详情并复制验证码"
             menu.addItem(item)
         }
         
@@ -400,7 +401,7 @@ final class MenuBuilder {
         PermissionManager.resetNotificationPermission()
     }
     
-    private static func showCopiedNotification(code: String) {
+    static func showCopiedNotification(code: String) {
         let content = UNMutableNotificationContent()
         content.title = "📋 已复制到剪贴板"
         content.body = "验证码: \(code)"
