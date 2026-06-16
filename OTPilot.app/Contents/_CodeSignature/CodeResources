@@ -6,27 +6,6 @@
 	<dict/>
 	<key>files2</key>
 	<dict>
-		<key>MacOS/OTPilot.dSYM/Contents/Info.plist</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			q82Uze7AUwIqR26MtxQUhlgrP1JL+dn9cpGs8QLix+Q=
-			</data>
-		</dict>
-		<key>MacOS/OTPilot.dSYM/Contents/Resources/DWARF/OTPilot</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			KgPsbC52X7WdmxWofKLDIhuCtKguDaYQpf6b1465MA0=
-			</data>
-		</dict>
-		<key>MacOS/OTPilot.dSYM/Contents/Resources/Relocations/aarch64/OTPilot.yml</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			Tiw5Q0afxzgg+5BkFDviESdhDfQpgAhrATJwR0q0eWA=
-			</data>
-		</dict>
 		<key>MacOS/SMSCodeReader</key>
 		<dict>
 			<key>cdhash</key>
